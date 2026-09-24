@@ -544,7 +544,6 @@ def select_plan_callback(call):
   if uid not in data:
     data[uid] = {"score": score, "lang": lang, "bots": {}}
   
-  # فقط ذخیره اطلاعات پلن و درخواست فایل (بدون روشن کردن ربات)
   data[uid]["pending_cost"] = cost
   data[uid]["pending_duration"] = duration
   save_data(data)
@@ -997,12 +996,33 @@ def manage_score(message):
   bot.reply_to(message, f"✅ امتیاز اضافه شد. موجودی جدید: {data[target_uid]['score']}")
 
 
+# تابع پیشرفته بررسی سینتکس، امنیت و هشدارهای کدهای کاربران
 def check_code_syntax(file_path):
   try:
     with open(file_path, "r", encoding="utf-8") as f:
       code_content = f.read()
+    
+    # ۱. بررسی خطاهای گرامری و ساختار پایتون
     compile(code_content, file_path, "exec")
-    return True, None
+    
+    warnings = []
+    
+    # ۲. بررسی الزامات کتابخانه telebot
+    if "telebot" not in code_content:
+      return False, "❌ کد شما از کتابخانه telebot استفاده نمی‌کند یا نامعتبر است."
+    
+    if "infinity_polling" not in code_content and "polling" not in code_content:
+      return False, "❌ در انتهای کد شما از متد شروع ربات (مثل bot.infinity_polling()) استفاده نشده است."
+      
+    # ۳. بررسی هشدار برای دکمه‌های شیشه‌ای (Inline Keyboards)
+    if "InlineKeyboardMarkup" in code_content or "callback_query" in code_content:
+      if "answer_callback_query" not in code_content:
+        warnings.append("⚠️ اخطار: شما از دکمه‌های شیشه‌ای استفاده کرده‌اید اما متد bot.answer_callback_query را برای پاسخ به کلیک کاربر قرار نداده‌اید (ممکن است دکمه‌های شما در تلگرام بچرخد و فریز شود).")
+
+    return True, warnings
+  except SyntaxError as se:
+    error_detail = f"خطا در خط {se.lineno}: {se.text}\nتوضیح: {se.msg}"
+    return False, error_detail
   except Exception as e:
     return False, str(e)
 
@@ -1020,7 +1040,6 @@ def handle_docs_from_step(message):
   cost = data.get(uid, {}).get("pending_cost")
   duration = data.get(uid, {}).get("pending_duration")
 
-  # بررسی اینکه آیا کاربر اول پلن زمانی را انتخاب کرده است یا خیر
   if cost is None or duration is None:
     bot.reply_to(message, "❌ لطفاً ابتدا از منوی «آنلاین کردن ربات»، مدت زمان فعال‌سازی را انتخاب کنید.")
     return
@@ -1050,18 +1069,25 @@ def handle_docs_from_step(message):
   with open(path, "wb") as f:
     f.write(downloaded_file)
 
-  is_valid, error_message = check_code_syntax(path)
+  is_valid, result_info = check_code_syntax(path)
   if not is_valid:
     if os.path.exists(path):
       os.remove(path)
       
     error_report = (
-        f"❌ **کد نویسی شما دارای خطاست!**\n\n```text\n{error_message}\n```"
+        f"❌ **کد نویسی شما دارای خطای ساختاری است!**\n\n```text\n{result_info}\n```\n\n"
+        "لطفاً کد خود را اصلاح کرده و مجدداً ارسال کنید."
     )
     bot.send_message(message.chat.id, error_report, parse_mode="Markdown")
     return
+  
+  # اگر کد مشکلی نداشت اما هشدارهایی داشت، به کاربر اطلاع می‌دهیم
+  warnings_list = result_info
+  if warnings_list:
+    warning_text = "\n".join(warnings_list)
+    bot.send_message(message.chat.id, f"⚠️ **نکات تکمیلی برای بهبود کد شما:**\n\n{warning_text}", parse_mode="Markdown")
 
-  # روشن کردن ربات پس از ارسال موفقیت‌آمیز فایل و تأیید سورس (با لوله خروجی خطا برای مانیتورینگ)
+  # روشن کردن ربات پس از ارسال موفقیت‌آمیز فایل و تأیید سورس
   process = subprocess.Popen(["python3", path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
   active_user_processes[bot_unique_id] = process
 
