@@ -1061,8 +1061,8 @@ def handle_docs_from_step(message):
     bot.send_message(message.chat.id, error_report, parse_mode="Markdown")
     return
 
-  # روشن کردن ربات پس از ارسال موفقیت‌آمیز فایل و تأیید سورس
-  process = subprocess.Popen(["python3", path])
+  # روشن کردن ربات پس از ارسال موفقیت‌آمیز فایل و تأیید سورس (با لوله خروجی خطا برای مانیتورینگ)
+  process = subprocess.Popen(["python3", path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
   active_user_processes[bot_unique_id] = process
 
   if uid not in data:
@@ -1104,12 +1104,28 @@ def handle_docs_from_step(message):
     print(f"Could not send notification directly to user: {e}")
 
 
+def monitor_user_bots():
+  while True:
+    for b_uid, proc in list(active_user_processes.items()):
+      if proc.poll() is not None:
+        try:
+          err_output = proc.stderr.read().decode('utf-8')
+          if err_output:
+            print(f"Bot {b_uid} error: {err_output}")
+        except:
+          pass
+    time.sleep(10)
+
+
 if __name__ == "__main__":
   print("Bot Manager is running...")
   load_admins()
   
   checker_thread = threading.Thread(target=background_expiration_checker, daemon=True)
   checker_thread.start()
+
+  monitor_thread = threading.Thread(target=monitor_user_bots, daemon=True)
+  monitor_thread.start()
 
   if os.path.exists(DATA_FILE):
     try:
@@ -1129,7 +1145,7 @@ if __name__ == "__main__":
               bot_path = os.path.join(USER_BOTS_DIR, f"{b_unique_id}_bot.py")
               if os.path.exists(bot_path):
                 try:
-                  proc = subprocess.Popen(["python3", bot_path])
+                  proc = subprocess.Popen(["python3", bot_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                   active_user_processes[b_unique_id] = proc
                 except Exception as e:
                   print(f"Failed to restart bot {b_unique_id}: {e}")
@@ -1138,7 +1154,7 @@ if __name__ == "__main__":
             bot_path = os.path.join(USER_BOTS_DIR, f"{user_id}_bot.py")
             if os.path.exists(bot_path):
               try:
-                proc = subprocess.Popen(["python3", bot_path])
+                proc = subprocess.Popen(["python3", bot_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 active_user_processes[user_id] = proc
               except Exception as e:
                 print(f"Failed to restart legacy bot for {user_id}: {e}")
