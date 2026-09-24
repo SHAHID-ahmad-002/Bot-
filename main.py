@@ -1138,68 +1138,75 @@ def handle_docs_from_step(message):
 
 @bot.callback_query_handler(func=lambda call: call.data == "auto_fix_bot_code")
 def auto_fix_bot_code_callback(call):
-  uid = str(call.from_user.id)
-  data = load_data()
-  lang = data.get(uid, {}).get("lang", "dr")
-  
-  path = data.get(uid, {}).get("pending_fix_path")
-  if not path or not os.path.exists(path):
-    bot.answer_callback_query(call.id, "❌ فایل مورد نظر یافت نشد، لطفاً دوباره فایل را ارسال کنید.", show_alert=True)
-    return
-
-  try:
-    with open(path, "r", encoding="utf-8") as f:
-      content = f.read()
-
-    # تزریق خودکار متد پاسخ به دکمه شیشه‌ای برای جلوگیری از فریز شدن
-    fixed_content = content + "\n\n# Auto-fixed by Bot Manager\ntry:\n    bot.answer_callback_query(call.id)\nexcept:\n    pass\n"
+    uid = str(call.from_user.id)
+    data = load_data()
+    lang = data.get(uid, {}).get("lang", "dr")
     
-    with open(path, "w", encoding="utf-8") as f:
-      f.write(fixed_content)
+    path = data.get(uid, {}).get("pending_fix_path")
+    if not path or not os.path.exists(path):
+        bot.answer_callback_query(call.id, "❌ فایل مورد نظر یافت نشد، لطفاً دوباره فایل را ارسال کنید.", show_alert=True)
+        return
 
-    bot.answer_callback_query(call.id, "✅ مشکل با موفقیت توسط ربات حل شد!")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
 
-    # استخراج نام فایل برای ساخت شناسه
-    file_base_name = os.path.basename(path).replace("_bot.py", "")
-    bot_unique_id = file_base_name
+        # اضافه کردن استاندارد و ایمن هندلر سراسری پاسخ به دکمه‌های شیشه‌ای برای جلوگیری از فریز شدن
+        fixed_content = content + (
+            "\n\n# Auto-fixed by Bot Manager (Global Callback Answerer)\n"
+            "@bot.callback_query_handler(func=lambda call: True)\n"
+            "def global_auto_fix_handler(call):\n"
+            "    try:\n"
+            "        bot.answer_callback_query(call.id)\n"
+            "    except Exception:\n"
+            "        pass\n"
+        )
+        
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(fixed_content)
 
-    # روشن کردن ربات اصلاح‌شده
-    process = subprocess.Popen(["python3", path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    active_user_processes[bot_unique_id] = process
+        bot.answer_callback_query(call.id, "✅ مشکل دکمه‌های شیشه‌ای با موفقیت حل شد!")
 
-    duration = data.get(uid, {}).get("pending_duration", 24 * 3600)
-    cost = data.get(uid, {}).get("pending_cost", 50)
+        file_base_name = os.path.basename(path).replace("_bot.py", "")
+        bot_unique_id = file_base_name
 
-    if uid not in data:
-      data[uid] = {"score": 0, "lang": lang, "bots": {}}
-    if "bots" not in data[uid]:
-      data[uid]["bots"] = {}
+        # روشن کردن ربات اصلاح‌شده
+        process = subprocess.Popen(["python3", path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        active_user_processes[bot_unique_id] = process
 
-    data[uid]["bots"][bot_unique_id] = {
-        "file_name": file_base_name.split("_", 1)[1] if "_" in file_base_name else "bot",
-        "expire_time": time.time() + duration
-    }
-    data[uid]["score"] -= cost
-    
-    # پاکسازی مقادیر موقت
-    if "pending_cost" in data[uid]:
-      del data[uid]["pending_cost"]
-    if "pending_duration" in data[uid]:
-      del data[uid]["pending_duration"]
-    if "pending_fix_path" in data[uid]:
-      del data[uid]["pending_fix_path"]
-      
-    save_data(data)
+        duration = data.get(uid, {}).get("pending_duration", 24 * 3600)
+        cost = data.get(uid, {}).get("pending_cost", 50)
 
-    bot.edit_message_text(
-        "🚀 **ربات شما با موفقیت توسط سیستم اصلاح و روشن شد!** ✨",
-        call.message.chat.id,
-        call.message.message_id
-    )
-    send_main_menu(call.message.chat.id, lang)
+        if uid not in data:
+            data[uid] = {"score": 0, "lang": lang, "bots": {}}
+        if "bots" not in data[uid]:
+            data[uid]["bots"] = {}
 
-  except Exception as e:
-    bot.answer_callback_query(call.id, f"❌ خطا در حل خودکار: {e}", show_alert=True)
+        data[uid]["bots"][bot_unique_id] = {
+            "file_name": file_base_name.split("_", 1)[1] if "_" in file_base_name else "bot",
+            "expire_time": time.time() + duration
+        }
+        data[uid]["score"] -= cost
+        
+        # پاکسازی مقادیر موقت
+        if "pending_cost" in data[uid]:
+            del data[uid]["pending_cost"]
+        if "pending_duration" in data[uid]:
+            del data[uid]["pending_duration"]
+        if "pending_fix_path" in data[uid]:
+            del data[uid]["pending_fix_path"]
+            
+        save_data(data)
+
+        bot.edit_message_text(
+            "🚀 **ربات شما با موفقیت توسط سیستم اصلاح و روشن شد!** ✨\nاکنون دکمه‌های شیشه‌ای بدون مشکل کار خواهند کرد.",
+            call.message.chat.id,
+            call.message.message_id
+        )
+        send_main_menu(call.message.chat.id, lang)
+
+    except Exception as e:
+        bot.answer_callback_query(call.id, f"❌ خطا در حل خودکار: {e}", show_alert=True)
 
 
 def monitor_user_bots():
