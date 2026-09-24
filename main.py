@@ -6,7 +6,7 @@ import time
 import telebot
 from telebot import types
 
-TOKEN = "8724320555:AAF_Muv-Y3Resfstt8PxxnqwT_Cwac--Y14"
+TOKEN = "8724320555:AAGbtREgkVanCdAQYD6nT7a4C5zHixslwAg"
 INITIAL_ADMIN_ID = "8173349543"  # آیدی عددی مالک اصلی ربات (ریس شاهد)
 
 bot = telebot.TeleBot(TOKEN)
