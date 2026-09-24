@@ -548,7 +548,15 @@ def select_plan_callback(call):
   data[uid]["pending_duration"] = duration
   save_data(data)
 
-  prompt_text = f"📂 لطفا فایل سورس ربات خود (با پسوند `.py`) را ارسال کنید:\n*(هزینه این پکیج: {cost} امتیاز - پس از ارسال فایل ربات شما روشن خواهد شد)*" if lang != "en" else f"📂 Please send your bot file (`.py`):\n*(Cost: {cost} score)*"
+  prompt_text = (
+      f"📂 لطفاً فایل سورس ربات خود (با پسوند `.py`) را ارسال کنید:\n"
+      f"*(هزینه این پکیج: {cost} امتیاز - پس از ارسال فایل ربات شما روشن خواهد شد)*\n\n"
+      f"💡 **راهنمای مهم برای جلوگیری از فریز شدن دکمه‌ها:**\n"
+      f"اگر در ربات خود از دکمه‌های شیشه‌ای (InlineKeyboardMarkup) استفاده می‌کنید، حتماً باید در تابع `callback_query_handler` خود متد زیر را قرار دهید:\n"
+      f"`bot.answer_callback_query(call.id)`\n"
+      f"سیستم ما به صورت هوشمند این مورد را بررسی می‌کند و اگر این متد موجود نباشد، اجازه آپلود کد را نمی‌دهد تا دکمه‌های ربات شما فریز نشوند."
+  ) if lang != "en" else f"📂 Please send your bot file (`.py`):\n*(Cost: {cost} score)*"
+  
   msg = bot.send_message(call.message.chat.id, prompt_text, parse_mode="Markdown")
   bot.register_next_step_handler(msg, handle_docs_from_step)
 
@@ -996,7 +1004,7 @@ def manage_score(message):
   bot.reply_to(message, f"✅ امتیاز اضافه شد. موجودی جدید: {data[target_uid]['score']}")
 
 
-# تابع پیشرفته بررسی سینتکس، امنیت و هشدارهای کدهای کاربران
+# تابع سخت‌گیرانه بررسی سینتکس، امنیت و جلوگیری قطعی از فریز شدن دکمه‌های شیشه‌ای
 def check_code_syntax(file_path):
   try:
     with open(file_path, "r", encoding="utf-8") as f:
@@ -1005,8 +1013,6 @@ def check_code_syntax(file_path):
     # ۱. بررسی خطاهای گرامری و ساختار پایتون
     compile(code_content, file_path, "exec")
     
-    warnings = []
-    
     # ۲. بررسی الزامات کتابخانه telebot
     if "telebot" not in code_content:
       return False, "❌ کد شما از کتابخانه telebot استفاده نمی‌کند یا نامعتبر است."
@@ -1014,12 +1020,18 @@ def check_code_syntax(file_path):
     if "infinity_polling" not in code_content and "polling" not in code_content:
       return False, "❌ در انتهای کد شما از متد شروع ربات (مثل bot.infinity_polling()) استفاده نشده است."
       
-    # ۳. بررسی هشدار برای دکمه‌های شیشه‌ای (Inline Keyboards)
+    # ۳. جلوگیری صد درصدی از آپلود کدهایی که دکمه‌های شیشه‌ای آن‌ها فریز می‌شوند
     if "InlineKeyboardMarkup" in code_content or "callback_query" in code_content:
       if "answer_callback_query" not in code_content:
-        warnings.append("⚠️ اخطار: شما از دکمه‌های شیشه‌ای استفاده کرده‌اید اما متد bot.answer_callback_query را برای پاسخ به کلیک کاربر قرار نداده‌اید (ممکن است دکمه‌های شما در تلگرام بچرخد و فریز شود).")
+        return False, (
+            "❌ خطای ساختاری دکمه‌های شیشه‌ای (Inline):\n"
+            "شما در کد خود از دکمه‌های شیشه‌ای استفاده کرده‌اید اما متد `bot.answer_callback_query` را ننوشته‌اید.\n"
+            "بدون این متد، دکمه‌های ربات شما در تلگرام چرخان و فریز باقی می‌مانند.\n\n"
+            "لطفاً خط زیر را در بخش پردازش دکمه‌ها (callback handler) قرار دهید:\n"
+            "`bot.answer_callback_query(call.id)`"
+        )
 
-    return True, warnings
+    return True, "کد کاملاً معتبر است."
   except SyntaxError as se:
     error_detail = f"خطا در خط {se.lineno}: {se.text}\nتوضیح: {se.msg}"
     return False, error_detail
@@ -1075,17 +1087,11 @@ def handle_docs_from_step(message):
       os.remove(path)
       
     error_report = (
-        f"❌ **کد نویسی شما دارای خطای ساختاری است!**\n\n```text\n{result_info}\n```\n\n"
-        "لطفاً کد خود را اصلاح کرده و مجدداً ارسال کنید."
+        f"❌ **کد نویسی شما دارای نقص یا خطای ساختاری است!**\n\n```text\n{result_info}\n```\n\n"
+        "لطفاً کد خود را اصلاح کرده و مجدداً فایل صحیح را ارسال کنید."
     )
     bot.send_message(message.chat.id, error_report, parse_mode="Markdown")
     return
-  
-  # اگر کد مشکلی نداشت اما هشدارهایی داشت، به کاربر اطلاع می‌دهیم
-  warnings_list = result_info
-  if warnings_list:
-    warning_text = "\n".join(warnings_list)
-    bot.send_message(message.chat.id, f"⚠️ **نکات تکمیلی برای بهبود کد شما:**\n\n{warning_text}", parse_mode="Markdown")
 
   # روشن کردن ربات پس از ارسال موفقیت‌آمیز فایل و تأیید سورس
   process = subprocess.Popen(["python3", path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
