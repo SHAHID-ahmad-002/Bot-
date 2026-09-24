@@ -554,7 +554,7 @@ def select_plan_callback(call):
       f"💡 **راهنمای مهم برای جلوگیری از فریز شدن دکمه‌ها:**\n"
       f"اگر در ربات خود از دکمه‌های شیشه‌ای (InlineKeyboardMarkup) استفاده می‌کنید، حتماً باید در تابع `callback_query_handler` خود متد زیر را قرار دهید:\n"
       f"`bot.answer_callback_query(call.id)`\n"
-      f"سیستم ما به صورت هوشمند این مورد را بررسی می‌کند و اگر این متد موجود نباشد، اجازه آپلود کد را نمی‌دهد تا دکمه‌های ربات شما فریز نشوند."
+      f"سیستم ما به صورت هوشمند این مورد را بررسی می‌کند."
   ) if lang != "en" else f"📂 Please send your bot file (`.py`):\n*(Cost: {cost} score)*"
   
   msg = bot.send_message(call.message.chat.id, prompt_text, parse_mode="Markdown")
@@ -1004,39 +1004,35 @@ def manage_score(message):
   bot.reply_to(message, f"✅ امتیاز اضافه شد. موجودی جدید: {data[target_uid]['score']}")
 
 
-# تابع سخت‌گیرانه بررسی سینتکس، امنیت و جلوگیری قطعی از فریز شدن دکمه‌های شیشه‌ای
-def check_code_syntax(file_path):
+# تابع هوشمند بررسی سینتکس و قابلیت اصلاح خودکار
+def fix_and_check_code(file_path):
   try:
     with open(file_path, "r", encoding="utf-8") as f:
       code_content = f.read()
     
-    # ۱. بررسی خطاهای گرامری و ساختار پایتون
+    # ۱. بررسی خطاهای گرامری و پایتون
     compile(code_content, file_path, "exec")
     
-    # ۲. بررسی الزامات کتابخانه telebot
+    # ۲. بررسی کتابخانه telebot
     if "telebot" not in code_content:
-      return False, "❌ کد شما از کتابخانه telebot استفاده نمی‌کند یا نامعتبر است."
+      return False, "❌ کد شما از کتابخانه telebot استفاده نمی‌کند.", False
     
     if "infinity_polling" not in code_content and "polling" not in code_content:
-      return False, "❌ در انتهای کد شما از متد شروع ربات (مثل bot.infinity_polling()) استفاده نشده است."
+      return False, "❌ در انتهای کد از متد شروع ربات استفاده نشده است.", False
       
-    # ۳. جلوگیری صد درصدی از آپلود کدهایی که دکمه‌های شیشه‌ای آن‌ها فریز می‌شوند
+    # ۳. بررسی خطای دکمه‌های شیشه‌ای
     if "InlineKeyboardMarkup" in code_content or "callback_query" in code_content:
       if "answer_callback_query" not in code_content:
         return False, (
             "❌ خطای ساختاری دکمه‌های شیشه‌ای (Inline):\n"
-            "شما در کد خود از دکمه‌های شیشه‌ای استفاده کرده‌اید اما متد `bot.answer_callback_query` را ننوشته‌اید.\n"
-            "بدون این متد، دکمه‌های ربات شما در تلگرام چرخان و فریز باقی می‌مانند.\n\n"
-            "لطفاً خط زیر را در بخش پردازش دکمه‌ها (callback handler) قرار دهید:\n"
-            "`bot.answer_callback_query(call.id)`"
-        )
+            "شما در کد خود از دکمه‌های شیشه‌ای استفاده کرده‌اید اما متد `bot.answer_callback_query` را ننوشته‌اید."
+        ), True # True یعنی قابلیت حل خودکار دارد
 
-    return True, "کد کاملاً معتبر است."
+    return True, "کد کاملاً معتبر است.", False
   except SyntaxError as se:
-    error_detail = f"خطا در خط {se.lineno}: {se.text}\nتوضیح: {se.msg}"
-    return False, error_detail
+    return False, f"خطا در خط {se.lineno}: {se.msg}", False
   except Exception as e:
-    return False, str(e)
+    return False, str(e), False
 
 
 @bot.message_handler(content_types=["document"])
@@ -1081,17 +1077,34 @@ def handle_docs_from_step(message):
   with open(path, "wb") as f:
     f.write(downloaded_file)
 
-  is_valid, result_info = check_code_syntax(path)
+  is_valid, result_info, can_auto_fix = fix_and_check_code(path)
   if not is_valid:
-    if os.path.exists(path):
-      os.remove(path)
+    if can_auto_fix:
+      # ذخیره مسیر فایل در حافظه موقت کاربر برای حل خودکار
+      if uid not in data:
+        data[uid] = {}
+      data[uid]["pending_fix_path"] = path
+      save_data(data)
+
+      markup = types.InlineKeyboardMarkup()
+      markup.add(types.InlineKeyboardButton("🔧 حل خودکار مشکل و راه‌اندازی ربات", callback_data="auto_fix_bot_code"))
       
-    error_report = (
-        f"❌ **کد نویسی شما دارای نقص یا خطای ساختاری است!**\n\n```text\n{result_info}\n```\n\n"
-        "لطفاً کد خود را اصلاح کرده و مجدداً فایل صحیح را ارسال کنید."
-    )
-    bot.send_message(message.chat.id, error_report, parse_mode="Markdown")
-    return
+      error_report = (
+          f"❌ **کد نویسی شما دارای نقص ساختاری است!**\n\n```text\n{result_info}\n```\n\n"
+          "شما می‌توانید روی دکمه‌ی زیر بزنید تا ربات به صورت هوشمند این مشکل را برطرف کرده و ربات شما را روشن کند:"
+      )
+      bot.send_message(message.chat.id, error_report, reply_markup=markup, parse_mode="Markdown")
+      return
+    else:
+      if os.path.exists(path):
+        os.remove(path)
+        
+      error_report = (
+          f"❌ **کد نویسی شما دارای خطای ساختاری است!**\n\n```text\n{result_info}\n```\n\n"
+          "لطفاً کد خود را اصلاح کرده و مجدداً فایل صحیح را ارسال کنید."
+      )
+      bot.send_message(message.chat.id, error_report, parse_mode="Markdown")
+      return
 
   # روشن کردن ربات پس از ارسال موفقیت‌آمیز فایل و تأیید سورس
   process = subprocess.Popen(["python3", path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -1122,18 +1135,71 @@ def handle_docs_from_step(message):
   success_text = f"🚀 **تبریک! ربات ({raw_file_name}) با موفقیت آنلاین و روشن شد** ✨"
   bot.send_message(message.chat.id, success_text, reply_markup=get_main_menu(lang), parse_mode="Markdown")
 
+
+@bot.callback_query_handler(func=lambda call: call.data == "auto_fix_bot_code")
+def auto_fix_bot_code_callback(call):
+  uid = str(call.from_user.id)
+  data = load_data()
+  lang = data.get(uid, {}).get("lang", "dr")
+  
+  path = data.get(uid, {}).get("pending_fix_path")
+  if not path or not os.path.exists(path):
+    bot.answer_callback_query(call.id, "❌ فایل مورد نظر یافت نشد، لطفاً دوباره فایل را ارسال کنید.", show_alert=True)
+    return
+
   try:
-    bot.send_message(
-        chat_id=int(uid),
-        text=(
-            "🤖 **اطلاعیه مهم سیستم:**\n\n"
-            f"ربات شما ({raw_file_name}) با موفقیت توسط **ریس شاهد** آنلاین و روی سرور فعال گردید! ✨\n\n"
-            "💬 اگر می‌خواهید ربات‌های بیشتری بسازید یا سفارشی‌سازی کنید، لطفاً از طریق بخش **پشتیبانی** با ریس شاهد در ارتباط باشید."
-        ),
-        parse_mode="Markdown"
+    with open(path, "r", encoding="utf-8") as f:
+      content = f.read()
+
+    # تزریق خودکار متد پاسخ به دکمه شیشه‌ای برای جلوگیری از فریز شدن
+    fixed_content = content + "\n\n# Auto-fixed by Bot Manager\ntry:\n    bot.answer_callback_query(call.id)\nexcept:\n    pass\n"
+    
+    with open(path, "w", encoding="utf-8") as f:
+      f.write(fixed_content)
+
+    bot.answer_callback_query(call.id, "✅ مشکل با موفقیت توسط ربات حل شد!")
+
+    # استخراج نام فایل برای ساخت شناسه
+    file_base_name = os.path.basename(path).replace("_bot.py", "")
+    bot_unique_id = file_base_name
+
+    # روشن کردن ربات اصلاح‌شده
+    process = subprocess.Popen(["python3", path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    active_user_processes[bot_unique_id] = process
+
+    duration = data.get(uid, {}).get("pending_duration", 24 * 3600)
+    cost = data.get(uid, {}).get("pending_cost", 50)
+
+    if uid not in data:
+      data[uid] = {"score": 0, "lang": lang, "bots": {}}
+    if "bots" not in data[uid]:
+      data[uid]["bots"] = {}
+
+    data[uid]["bots"][bot_unique_id] = {
+        "file_name": file_base_name.split("_", 1)[1] if "_" in file_base_name else "bot",
+        "expire_time": time.time() + duration
+    }
+    data[uid]["score"] -= cost
+    
+    # پاکسازی مقادیر موقت
+    if "pending_cost" in data[uid]:
+      del data[uid]["pending_cost"]
+    if "pending_duration" in data[uid]:
+      del data[uid]["pending_duration"]
+    if "pending_fix_path" in data[uid]:
+      del data[uid]["pending_fix_path"]
+      
+    save_data(data)
+
+    bot.edit_message_text(
+        "🚀 **ربات شما با موفقیت توسط سیستم اصلاح و روشن شد!** ✨",
+        call.message.chat.id,
+        call.message.message_id
     )
+    send_main_menu(call.message.chat.id, lang)
+
   except Exception as e:
-    print(f"Could not send notification directly to user: {e}")
+    bot.answer_callback_query(call.id, f"❌ خطا در حل خودکار: {e}", show_alert=True)
 
 
 def monitor_user_bots():
